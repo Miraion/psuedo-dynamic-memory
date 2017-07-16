@@ -3,6 +3,8 @@
  *
  * No external references were used in the making of this file!
  *
+ * Description:
+ *
  * This framework was created to simulate dynamic memory allocation
  * for RobotC which does not support such a feature.
  *
@@ -30,16 +32,39 @@
  *          For a char,   7 bytes are wasted.
  *          For a float,  4 bytes are wasted.
  *          For a double, 0 bytes are wasted.
+ *
+ *      As the size of the block the element is stored in and the
+ *      actual size of the element differ, standard array notation
+ *      may not work as expected.  To combat this problem a
+ *      coefficient must be multiplied to the desired index to get
+ *      the correct location.
+ *          Example:
+ *              to get the 5th element of an array of ints stored
+ *              in dynamic memory use this:
+ *                  int_array[INTCOEFF * 5] = 32;
+ *      for custom types or types that do not have a predefined
+ *      coefficient, the formula is:
+ *          sizeof(block) / sizeof(TYPE)
+ *                      or
+ *                8 / sizeof(TYPE)
+ *
+ * Update:
+ *      __free_memory array size reduced by a factor of 8.
+ *
+ *      Instead of using a whole byte to store whether a location
+ *      is in use, a single bit is now being used.  The states of
+ *      8 locations are stored as a single byte and, with the use
+ *      of bitwise operators, we are able to determine and set the
+ *      states of individual bits in that set.
  */
 
 #ifndef __d_memory_h__
 #define __d_memory_h__
 
-typedef void* block; // An 8 byte chunk
-
-typedef unsigned char inuse; // A 1 byte chunk
-#define YES 1
-#define NO  0
+// An 8 byte chunk
+typedef void* block;
+// A 1 byte chunk
+typedef unsigned char byte;
 
 // Declares how large the dynamic memory array should be.
 // Overwrite this size by defining MEMORY_SIZE before including this file.
@@ -49,7 +74,133 @@ typedef unsigned char inuse; // A 1 byte chunk
 
 // Array declarations.
 static block __d_memory [MEMORY_SIZE];
-static inuse __free_memory [MEMORY_SIZE];
+static byte __free_memory [MEMORY_SIZE / 8];
+
+// Custom boolean declaration as to not conflict with RobotC'c bool type.
+typedef unsigned char __bool;
+#define YES 1
+#define NO  0
+
+#define EMPTY 0
+
+// Array coefficients, see 'Problems' for use.
+#define INTCOEF 	(sizeof(block) / sizeof(int))
+#define CHARCOEF 	(sizeof(block) / sizeof(char))
+#define FLOATCOEF	(sizeof(block) / sizeof(float))
+
+/*
+ * Returns an isolated bit used in the functions below to determine the states
+ * of bits in the __free_memory array.
+ *
+ * Using bitwise left shift operator, returns an byte with a single bit set to
+ * 1 depending on where the given index lies in a set of 8 locations.
+ *
+ *  Example:
+ *      idx % 8 = 0
+ *          returns bx00000001
+ *
+ *      idx % 8 = 1
+ *          returns bx00000010
+ *
+ *          .
+ *          .
+ *          .
+ *
+ *      idx % 8 = 7
+ *          returns bx10000000
+ */
+byte __bit_encoder (int idx) {
+    return (byte)(1 << (idx % 8));
+}
+
+/*
+ * Sets location idx to be in use.
+ *
+ *      Example, idx = 9:
+ *      before:
+ *          __free_memory[1] = bx00000000
+ *                                      ^
+ *                                    idx 8
+ *      after:
+ *          __free_memory[1] = bx00000010
+ *
+ *      Sets desired bit to 1 via bitwise OR
+ *            v set this to 1
+ *      bx00100100
+ *
+ *      bx00100100
+ *    | bx00001000 < isolated bit
+ *    = bx00101100
+ *
+ *    Result is original with isolated bit set to 1
+ */
+void __set_block_used (int idx) {
+    int idx_converted = idx / 8;
+    __free_memory[idx_converted] = __free_memory[idx_converted] | __bit_encoder(idx);
+}
+
+/*
+ * Sets location idx to be free..
+ *
+ *      Example, idx = 9:
+ *      before:
+ *          __free_memory[1] = bx00000010
+ *                                      ^
+ *                                    idx 8
+ *      after:
+ *          __free_memory[1] = bx00000000
+ *
+ *      Sets desired bit to 0 via bitwise AND and NOT
+ *            v set this to 0
+ *      bx01101011
+ *
+ *      On isolated bit perform NOT operation
+ *    ~ bx00001000
+ *    = bx11110111
+ *
+ *      AND original and NOT isolated
+ *      bx01101011
+ *    & bx11110111
+ *    = bx01100011
+ *
+ *      Result is original with isolated bit set to 0
+ */
+void __set_block_free (int idx) {
+    int idx_helper = idx / 8;
+    __free_memory[idx_helper] = __free_memory[idx_helper] & (~__bit_encoder(idx));
+}
+
+/*
+ * Checks whether a location is in use.
+ *
+ * Checks if desired bit is set to 1 using bitwise AND
+ *
+ *  Example 1:
+ *             v check this bit
+ *      bx00110100
+ *
+ *      bx00110100
+ *    & bx00000100 < isolated bit
+ *    = bx00000100
+ *
+ *      bx00000100 = 4 which passes ternary operator ?: so we return 0
+ *                   as this space is currently in use.
+ *
+ *  Example 2:
+ *             v check this bit
+ *      bx11001000
+ *
+ *      bx11001000
+ *    & bx00000100 < isolated bit
+ *    = bx00000000
+ *
+ *      bx00000000 = 0 which fails the ternary operation so we return 1
+ *                   as this space is free.
+ */
+__bool __check_block_free (int idx) {
+    int idx_helper = idx / 8;
+    return __free_memory[idx_helper] & __bit_encoder(idx) ? (__bool)0:(__bool)1;
+}
 
 // Sets all blocks in __d_memory to NULL and all slots as free.
 //
@@ -57,7 +208,9 @@ static inuse __free_memory [MEMORY_SIZE];
 void initialize_memory () {
 	for (int i = 0; i < MEMORY_SIZE; i++) {
 		__d_memory[i] = NULL;
-		__free_memory[i] = YES;
+        if (i < MEMORY_SIZE / 8) {
+            __free_memory[i] = EMPTY;
+        }
 	}
 }
 
@@ -74,11 +227,11 @@ void __memory_error (const char* msg) {
 block* __find_free_chunk(int numBlocks) {
 	int additionalBlocksNeeded = numBlocks - 1;
 	for (int i = 0; i < MEMORY_SIZE; i++) {
-		if (__free_memory[i] == YES) {
+		if (__check_block_free(i)) {
 			// Check if blocks after are free as well.
-            unsigned char isOK = YES;
+            __bool isOK = YES;
 			for (int j = i; j < i + additionalBlocksNeeded; j++) {
-				if (__free_memory[j] == NO) {
+				if (!__check_block_free(j)) {
 					i = j;
                     isOK = NO;
 					break;
@@ -90,7 +243,7 @@ block* __find_free_chunk(int numBlocks) {
 
                 // Set blocks to be in use
                 for (int j = i; j <= i + additionalBlocksNeeded; j++) {
-                    __free_memory[j] = NO;
+                    __set_block_used(j);
                 }
 
                 // Return pointer to the first block
@@ -99,7 +252,7 @@ block* __find_free_chunk(int numBlocks) {
 		}
 	}
 
-	// Unable to find a sutable chunck of memory...
+	// Unable to find a suitable chunk of memory...
 	__memory_error("Unable to allocate memory");
 	// Send error message or crash the program
 
@@ -119,43 +272,28 @@ block* dmalloc_array (int size) {
 
 // Sets the block that 'item' is pointing to to be not in use.
 //
-// Use to unallocate a single item.
+// Use to un-allocate a single item.
 void dmfree (block* item) {
 	int index = (int)(item - __d_memory);
-	__free_memory[index] = YES;
+    __set_block_free(index);
 }
 
 // Sets a section of blocks of size 'size' after and including
 // the block that 'start' points to to be not in use.
 //
-// Use to unallocate an entire array.
+// Use to un-allocate an entire array.
 void dmfree_array (block* start, int size) {
 	int index = (int)(start - __d_memory);
-	for (int i = 0; i < size; i++) {
-		__free_memory[index + i] = YES;
+	for (int i = index; i < size + index; i++) {
+        __set_block_free(i);
 	}
 }
-
-/* 	Array index coefficients.
- 		As the size of a block is different from the size
- 		of an int or float, using regular array notation
- 		will not work as expected.  Therefore, when trying
- 		to access an element, the index must be multiplied
- 		by the type coefficient bellow.
-
- 	Example:
- 		to get element i from an in array use,
- 		int x = array_int[INTCOEF * i]
- */
-#define INTCOEF 	(sizeof(block) / sizeof(int))
-#define CHARCOEF 	(sizeof(block) / sizeof(char))
-#define FLOATCOEF	(sizeof(block) / sizeof(float))
 
 // Returns the amount of memory used as a percent.
 int amount_memory_used () {
     int slotsFilled = 0;
     for (int i = 0; i < MEMORY_SIZE; i++) {
-        if (__free_memory[i] == NO) {
+        if (!__check_block_free(i)) {
             ++slotsFilled;
         }
     }
@@ -164,13 +302,13 @@ int amount_memory_used () {
 
 // For testing...
 //
-// Prints out the entrity of __d_memory with the elements represented as ints.
+// Prints out the entirety of __d_memory with the elements represented as ints.
 void print_memory () {
 	for (int i = 0; i < MEMORY_SIZE; i++) {
-		printf("block[%d]:\t%d\t\tfree: %d\n",
+		printf("block[%d]:\t0x%x\t\tfree: %d\n",
                 i,
                 (int)__d_memory[i],
-                (int)__free_memory[i]);
+                (__check_block_free(i) != 0 ? 1:0));
 	}
     printf("Memory capacity: %d blocks\n", MEMORY_SIZE);
     printf("Memory in use:   %d%%\n", amount_memory_used());

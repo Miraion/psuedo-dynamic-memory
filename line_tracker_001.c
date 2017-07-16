@@ -98,7 +98,7 @@ void increment_location (location* currentLoc, direction heading) {
 
 //===---- Testing ----===//
 
-#define MEMORY_SIZE 64
+//#define MEMORY_SIZE 64
 #include "dmemory.h"
 
 #define TYPE int
@@ -123,19 +123,22 @@ int main () {
         push_int(&i_stack, i);
     }
 
-    while (i_stack.size > 0) {
-        printf("popped: %d\n", pop_int(&i_stack));
-    }
+//    while (i_stack.size > 0) {
+//        printf("popped: %d\n", pop_int(&i_stack));
+//    }
 
-    delete_stack_int(&i_stack);
+//    delete_stack_int(&i_stack);
 
-    printf("\n");
+//    printf("\n");
 
     stack_point p_stack = make_stack_point();
     push_point(&p_stack, make_point(5, 1));
+    push_point(&p_stack, make_point(3415, 25));
     point p = pop_point(&p_stack);
 
-    printf("(%d, %d)\n\n", p.x, p.y);
+//    printf("(%d, %d)\n\n", p.x, p.y);
+    printf("Memory capacity: %d blocks\n", MEMORY_SIZE);
+    printf("Memory in use:   %d%%\n", amount_memory_used());
 
-	print_memory();
+//	print_memory();
 }
