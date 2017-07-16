@@ -103,6 +103,7 @@ void increment_location (location* currentLoc, direction heading) {
 
 #define TYPE int
 #include "stack_dm.h"
+#include "array_dm.h"
 #undef TYPE
 
 #define TYPE point
