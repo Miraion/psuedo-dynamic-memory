@@ -3,3 +3,5 @@
 *.db
 *.opendb
 *.sqlite
+*.ipch
+.vs/psuedo-dynamic-memory/v15/.suo
